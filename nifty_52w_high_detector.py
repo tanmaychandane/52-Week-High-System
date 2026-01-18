@@ -1,370 +1,155 @@
-#!/usr/bin/env python3
-"""
-Nifty 100 Weekly 52-Week High Detector
-=====================================
-
-This script checks Nifty 100 stocks for 52-week highs from Monday to Friday 3 PM.
-It can be scheduled to run automatically every Friday at 3 PM.
-
-Usage:
-    python nifty_52w_high_detector.py
-    python nifty_52w_high_detector.py --weeks-back 4  # Check last 4 weeks
-    python nifty_52w_high_detector.py --output csv    # Save to CSV
-    python nifty_52w_high_detector.py --email your@email.com  # Email results
-
-Dependencies:
-    pip install yfinance pandas numpy openpyxl
-
-Author: Tanmay Chandane
-Date: 28 September 2025
-"""
-
 import yfinance as yf
 import pandas as pd
-import numpy as np
-from datetime import datetime, timedelta, date
-import argparse
+from datetime import datetime, timedelta
+import pytz
 import warnings
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-import sys
-import logging
-
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
-
 warnings.filterwarnings('ignore')
 
-class Nifty100WeeklyHighDetector:
+# Nifty 100 stock symbols (with .NS suffix for NSE)
+NIFTY_100_SYMBOLS = [
+    'ABB.NS', 'ADANIENSOL.NS', 'ADANIENT.NS', 'ADANIGREEN.NS', 'ADANIPORTS.NS',
+    'ADANIPOWER.NS', 'AMBUJACEM.NS', 'APOLLOHOSP.NS', 'ASIANPAINT.NS', 'AXISBANK.NS',
+    'BAJAJ-AUTO.NS', 'BAJAJFINSV.NS', 'BAJAJHFL.NS', 'BAJAJHLDNG.NS', 'BAJFINANCE.NS',
+    'BANKBARODA.NS', 'BEL.NS', 'BHARTIARTL.NS', 'BOSCHLTD.NS', 'BPCL.NS',
+    'BRITANNIA.NS', 'CANBK.NS', 'CGPOWER.NS', 'CHOLAFIN.NS', 'CIPLA.NS',
+    'COALINDIA.NS', 'DIVISLAB.NS', 'DLF.NS', 'DMART.NS', 'DRREDDY.NS',
+    'EICHERMOT.NS', 'ENRIN.NS', 'ETERNAL.NS', 'GAIL.NS', 'GODREJCP.NS',
+    'GRASIM.NS', 'HAL.NS', 'HAVELLS.NS', 'HCLTECH.NS', 'HDFCBANK.NS',
+    'HDFCLIFE.NS', 'HINDALCO.NS', 'HINDUNILVR.NS', 'HINDZINC.NS', 'HYUNDAI.NS',
+    'ICICIBANK.NS', 'ICICIGI.NS', 'INDHOTEL.NS', 'INDIGO.NS', 'INFY.NS',
+    'IOC.NS', 'IRFC.NS', 'ITC.NS', 'JINDALSTEL.NS', 'JIOFIN.NS',
+    'JSWENERGY.NS', 'JSWSTEEL.NS', 'KOTAKBANK.NS', 'LICI.NS', 'LODHA.NS',
+    'LT.NS', 'LTIM.NS', 'M&M.NS', 'MARUTI.NS', 'MAXHEALTH.NS',
+    'MAZDOCK.NS', 'MOTHERSON.NS', 'NAUKRI.NS', 'NESTLEIND.NS', 'NTPC.NS',
+    'ONGC.NS', 'PFC.NS', 'PIDILITIND.NS', 'PNB.NS', 'POWERGRID.NS',
+    'RECLTD.NS', 'RELIANCE.NS', 'SBILIFE.NS', 'SBIN.NS', 'SHREECEM.NS',
+    'SHRIRAMFIN.NS', 'SIEMENS.NS', 'SOLARINDS.NS', 'SUNPHARMA.NS', 'TATACONSUM.NS',
+    'TATAPOWER.NS', 'TATASTEEL.NS', 'TCS.NS', 'TECHM.NS', 'TITAN.NS',
+    'TMPV.NS', 'TORNTPHARM.NS', 'TRENT.NS', 'TVSMOTOR.NS', 'ULTRACEMCO.NS',
+    'UNITDSPR.NS', 'VBL.NS', 'VEDL.NS', 'WIPRO.NS', 'ZYDUSLIFE.NS'
+]
+
+def get_stock_data(symbol, period='1y'):
+    """Fetch historical stock data"""
+    try:
+        stock = yf.Ticker(symbol)
+        df = stock.history(period=period)
+        return df
+    except Exception as e:
+        print(f"Error fetching data for {symbol}: {e}")
+        return None
+
+def find_52_week_high_stocks(week_start=None, week_end=None):
     """
-    Advanced system to detect Nifty 100 stocks hitting 52-week highs during the trading week
+    Find stocks that hit 52-week high in a specific week
+    
+    Parameters:
+    - week_start: Start date of the week (datetime object)
+    - week_end: End date of the week (datetime object)
     """
-
-    def __init__(self):
-        # Complete Nifty 100 stocks list (updated for September 2025)
-        self.nifty100_stocks = [
-            'ABB', 'ADANIENSOL', 'ADANIENT', 'ADANIGREEN', 'ADANIPORTS', 'ADANIPOWER', 'AMBUJACEM',
-            'APOLLOHOSP', 'ASIANPAINT', 'AXISBANK', 'BAJAJ-AUTO', 'BAJAJFINSV', 'BAJAJHFL', 'BAJAJHLDNG', 'BAJFINANCE',
-            'BANKBARODA', 'BEL', 'BHARTIARTL', 'BOSCHLTD', 'BPCL', 'BRITANNIA', 'CANBK',
-            'CGPOWER', 'CHOLAFIN', 'CIPLA', 'COALINDIA', 'DABUR', 'DIVISLAB', 'DLF', 'DMART',
-            'DRREDDY', 'EICHERMOT', 'ETERNAL', 'GAIL', 'GODREJCP', 'GRASIM', 'HAL',
-            'HAVELLS', 'HCLTECH', 'HDFCBANK', 'HDFCLIFE', 'HEROMOTOCO', 'HINDALCO', 'HINDUNILVR',
-            'HYUNDAI', 'ICICIBANK', 'ICICIGI', 'ICICIPRULI', 'INDHOTEL', 'INDIGO',
-            'INDUSINDBK', 'INFY', 'IOC', 'IRFC', 'ITC', 'JINDALSTEL', 'JIOFIN',
-            'JSWENERGY', 'JSWSTEEL', 'KOTAKBANK', 'LICI', 'LODHA', 'LT', 'LTIM',
-            'M&M', 'MARUTI', 'MOTHERSON', 'NAUKRI', 'NESTLEIND', 'NTPC', 'ONGC', 'PFC',
-            'PIDILITIND', 'PNB', 'POWERGRID', 'RECLTD', 'RELIANCE', 'SBILIFE', 'SBIN', 'SHREECEM',
-            'SHRIRAMFIN', 'SIEMENS', 'SUNPHARMA', 'SWIGGY', 'TATACONSUM', 'TATAMOTORS', 'TATAPOWER', 'TATASTEEL',
-            'TCS', 'TECHM', 'TITAN', 'TORNTPHARM', 'TRENT', 'TVSMOTOR', 'ULTRACEMCO', 'UNITDSPR',
-            'VBL', 'VEDL', 'WIPRO', 'ZYDUSLIFE'
-        ]
-
-        # Limit to exactly 100 stocks and add .NS suffix for yfinance
-        self.nifty100_stocks = self.nifty100_stocks[:100]
-        self.nifty100_with_ns = [stock + '.NS' for stock in self.nifty100_stocks]
-
-        logger.info(f"Initialized with {len(self.nifty100_stocks)} Nifty 100 stocks")
-
-    def get_week_dates(self, weeks_back=0):
-        """Get Monday and Friday of the target week"""
-        today = datetime.now().date()
-
-        # Calculate the Monday of the target week
-        days_since_monday = today.weekday()
-        this_monday = today - timedelta(days=days_since_monday)
-        target_monday = this_monday - timedelta(weeks=weeks_back)
-
-        # Calculate Friday of the same week
-        target_friday = target_monday + timedelta(days=4)
-
-        return target_monday, target_friday
-
-    def is_52_week_high(self, ticker_data, current_high, check_date, tolerance=0.001):
-        """
-        Check if current high is a 52-week high
-
-        Args:
-            ticker_data: Historical data for the stock
-            current_high: The high price to check
-            check_date: Date to check against
-            tolerance: Tolerance for considering a price as 52-week high (0.1% default)
-        """
-        try:
-            # Get 52 weeks of data ending at check_date
-            end_date = check_date
-            start_date = end_date - timedelta(days=365)
-
-            # Filter historical data
-            historical_data = ticker_data[
-                (ticker_data.index.date >= start_date) & 
-                (ticker_data.index.date <= check_date)
-            ]
-
-            if len(historical_data) < 200:  # Need at least ~200 trading days for valid 52-week calc
-                return False, None, None
-
-            # Find the actual 52-week high
-            week_52_high = historical_data['High'].max()
-            week_52_high_date = historical_data['High'].idxmax().date()
-
-            # Check if current high is at or above 52-week high (with tolerance)
-            is_high = current_high >= (week_52_high * (1 - tolerance))
-
-            return is_high, week_52_high, week_52_high_date
-
-        except Exception as e:
-            logger.error(f"Error in 52-week high calculation: {e}")
-            return False, None, None
-
-    def scan_weekly_highs(self, weeks_back=0, save_to_csv=False, save_to_excel=False):
-        """
-        Main function to scan for 52-week highs during the specified week
-
-        Args:
-            weeks_back: How many weeks back to check (0 = current week)
-            save_to_csv: Save results to CSV file
-            save_to_excel: Save results to Excel file
-        """
-        start_date, end_date = self.get_week_dates(weeks_back)
-
-        logger.info(f"Scanning week: {start_date} to {end_date}")
-        logger.info(f"Checking {len(self.nifty100_with_ns)} stocks for 52-week highs...")
-
-        results = []
-        success_count = 0
-        error_count = 0
-
-        # Process in batches to manage API calls
-        batch_size = 10
-        total_batches = (len(self.nifty100_with_ns) + batch_size - 1) // batch_size
-
-        for batch_num in range(total_batches):
-            start_idx = batch_num * batch_size
-            end_idx = min(start_idx + batch_size, len(self.nifty100_with_ns))
-            batch = self.nifty100_with_ns[start_idx:end_idx]
-
-            logger.info(f"Processing batch {batch_num + 1}/{total_batches}")
-
-            for ticker in batch:
-                try:
-                    stock = yf.Ticker(ticker)
-
-                    # Get historical data (extra buffer for 52-week calculation)
-                    hist_start = start_date - timedelta(days=400)
-                    hist_data = stock.history(
-                        start=hist_start,
-                        end=end_date + timedelta(days=1),
-                        interval="1d"
-                    )
-
-                    if len(hist_data) == 0:
-                        logger.warning(f"No data for {ticker}")
-                        error_count += 1
-                        continue
-
-                    # Check each trading day in the target week
-                    week_data = hist_data[
-                        (hist_data.index.date >= start_date) & 
-                        (hist_data.index.date <= end_date)
-                    ]
-
-                    for date_idx, row in week_data.iterrows():
-                        trade_date = date_idx.date()
-                        day_high = row['High']
-                        day_close = row['Close']
-                        day_volume = row['Volume']
-
-                        # Check if this day's high is a 52-week high
-                        is_high, week_52_high, high_date = self.is_52_week_high(
-                            hist_data, day_high, trade_date
-                        )
-
-                        if is_high:
-                            # Get additional metrics
-                            day_change = ((day_close - row['Open']) / row['Open']) * 100
-
-                            results.append({
-                                'Stock': ticker.replace('.NS', ''),
-                                'Date': trade_date,
-                                'High': round(day_high, 2),
-                                'Close': round(day_close, 2),
-                                'Volume': int(day_volume),
-                                'Day_Change_%': round(day_change, 2),
-                                '52W_High': round(week_52_high, 2),
-                                'Previous_High_Date': high_date,
-                                'Days_Since_Prev_High': (trade_date - high_date).days,
-                                'New_High': 'Yes' if day_high > week_52_high else 'Matched'
-                            })
-
-                            logger.info(f" {ticker.replace('.NS', '')} hit 52W high on {trade_date}")
-                            break  # Only record first 52W high in the week
-
-                    success_count += 1
-
-                except Exception as e:
-                    logger.error(f"Error processing {ticker}: {str(e)[:100]}")
-                    error_count += 1
-
-        # Create results DataFrame
-        if results:
-            results_df = pd.DataFrame(results)
-            results_df = results_df.sort_values(['Date', 'Stock']).reset_index(drop=True)
-        else:
-            results_df = pd.DataFrame()
-
-        # Log summary
-        logger.info(f"\nScan completed!")
-        logger.info(f" Successfully processed: {success_count}")
-        logger.info(f" Errors: {error_count}")
-        logger.info(f" Found {len(results)} stocks with 52-week highs")
-
-        # Save results if requested
-        if save_to_csv and len(results_df) > 0:
-            filename = f"nifty100_52w_highs_{start_date}_to_{end_date}.csv"
-            results_df.to_csv(filename, index=False)
-            logger.info(f" Results saved to {filename}")
-
-        if save_to_excel and len(results_df) > 0:
-            filename = f"nifty100_52w_highs_{start_date}_to_{end_date}.xlsx"
-            results_df.to_excel(filename, index=False)
-            logger.info(f" Results saved to {filename}")
-
-        return results_df
-
-    def get_near_52w_high_stocks(self, threshold_percent=5):
-        """
-        Get stocks that are within X% of their 52-week high
-
-        Args:
-            threshold_percent: Percentage threshold (default 5%)
-        """
-        logger.info(f"Finding stocks within {threshold_percent}% of 52-week high...")
-
-        near_high_stocks = []
-
-        for ticker in self.nifty100_with_ns[:20]:  # Limit for demo
-            try:
-                stock = yf.Ticker(ticker)
-                hist_data = stock.history(period="1y")
-
-                if len(hist_data) == 0:
-                    continue
-
-                current_price = hist_data['Close'].iloc[-1]
-                week_52_high = hist_data['High'].max()
-                week_52_low = hist_data['Low'].min()
-
-                # Calculate distance from 52W high
-                distance_percent = ((week_52_high - current_price) / week_52_high) * 100
-
-                if distance_percent <= threshold_percent:
-                    near_high_stocks.append({
-                        'Stock': ticker.replace('.NS', ''),
-                        'Current_Price': round(current_price, 2),
-                        '52W_High': round(week_52_high, 2),
-                        '52W_Low': round(week_52_low, 2),
-                        'Distance_from_High_%': round(distance_percent, 2),
-                        'Performance_52W_%': round(((current_price - week_52_low) / week_52_low) * 100, 2)
-                    })
-
-            except Exception as e:
-                logger.error(f"Error processing {ticker}: {e}")
-
-        return pd.DataFrame(near_high_stocks)
-
-    def send_email_report(self, results_df, email_to, email_from, email_password, smtp_server="smtp.gmail.com", smtp_port=587):
-        """
-        Send email report of the results
-        """
-        try:
-            msg = MIMEMultipart()
-            msg['From'] = email_from
-            msg['To'] = email_to
-            msg['Subject'] = f"Nifty 100 Weekly 52-Week Highs Report - {datetime.now().strftime('%Y-%m-%d')}"
-
-            if len(results_df) > 0:
-                body = f"""
-                Weekly 52-Week High Report
-                =========================
-
-                Found {len(results_df)} stocks that hit 52-week highs this week:
-
-                {results_df.to_string(index=False)}
-
-                Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-                """
-            else:
-                body = """
-                Weekly 52-Week High Report
-                =========================
-
-                No stocks hit 52-week highs during the scanned period.
-
-                Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-                """
-
-            msg.attach(MIMEText(body, 'plain'))
-
-            server = smtplib.SMTP(smtp_server, smtp_port)
-            server.starttls()
-            server.login(email_from, email_password)
-
-            text = msg.as_string()
-            server.sendmail(email_from, email_to, text)
-            server.quit()
-
-            logger.info(f" Email sent to {email_to}")
-
-        except Exception as e:
-            logger.error(f"Error sending email: {e}")
-
-def main():
-    parser = argparse.ArgumentParser(description='Nifty 100 Weekly 52-Week High Detector')
-    parser.add_argument('--weeks-back', type=int, default=0, help='Number of weeks back to check (default: current week)')
-    parser.add_argument('--output', choices=['csv', 'excel', 'both'], help='Save output to file')
-    parser.add_argument('--email', type=str, help='Email address to send results to')
-    parser.add_argument('--near-high', action='store_true', help='Also show stocks near 52-week high')
-    parser.add_argument('--threshold', type=float, default=5.0, help='Threshold percentage for near-high (default: 5%)')
-
-    args = parser.parse_args()
-
-    # Initialize detector
-    detector = Nifty100WeeklyHighDetector()
-
-    # Run the main scan
-    save_csv = args.output in ['csv', 'both']
-    save_excel = args.output in ['excel', 'both']
-
-    results = detector.scan_weekly_highs(
-        weeks_back=args.weeks_back,
-        save_to_csv=save_csv,
-        save_to_excel=save_excel
-    )
-
-    # Display results
-    if len(results) > 0:
-        print("\n" + "="*80)
-        print(" STOCKS THAT HIT 52-WEEK HIGHS")
-        print("="*80)
-        print(results.to_string(index=False))
+    # Set timezone to IST (Indian Standard Time)
+    ist = pytz.timezone('Asia/Kolkata')
+    
+    if week_start is None or week_end is None:
+        # Default to current week
+        today = datetime.now(ist)
+        week_start = today - timedelta(days=today.weekday())
+        week_end = week_start + timedelta(days=6)
     else:
-        print("\n No stocks hit 52-week highs during the scanned period.")
+        # Make sure provided dates are timezone-aware
+        if week_start.tzinfo is None:
+            week_start = ist.localize(week_start)
+        if week_end.tzinfo is None:
+            week_end = ist.localize(week_end)
+    
+    print(f"\n{'='*80}")
+    print(f"NIFTY 100 - 52 WEEK HIGH SCANNER")
+    print(f"{'='*80}")
+    print(f"Analysis Period: {week_start.strftime('%Y-%m-%d')} to {week_end.strftime('%Y-%m-%d')}")
+    print(f"{'='*80}\n")
+    
+    stocks_at_52w_high = []
+    
+    for idx, symbol in enumerate(NIFTY_100_SYMBOLS, 1):
+        print(f"Processing [{idx}/{len(NIFTY_100_SYMBOLS)}]: {symbol.replace('.NS', '')}", end='\r')
+        
+        df = get_stock_data(symbol, period='1y')
+        
+        if df is None or df.empty:
+            continue
+        
+        # Get data for the specified week
+        week_data = df[(df.index >= week_start) & (df.index <= week_end)]
+        
+        if week_data.empty:
+            continue
+        
+        # Calculate 52-week high (excluding current week)
+        data_before_week = df[df.index < week_start]
+        
+        if data_before_week.empty:
+            continue
+        
+        week_52_high = data_before_week['High'].max()
+        week_high = week_data['High'].max()
+        current_price = df['Close'].iloc[-1]
+        
+        # Check if stock hit 52-week high during the week
+        if week_high >= week_52_high * 0.999:  # 0.1% tolerance
+            stock_name = symbol.replace('.NS', '')
+            stocks_at_52w_high.append({
+                'Symbol': stock_name,
+                '52W High': round(week_52_high, 2),
+                'Week High': round(week_high, 2),
+                'Current Price': round(current_price, 2),
+                'Date of High': week_data['High'].idxmax().strftime('%Y-%m-%d'),
+                'Gain %': round(((week_high - week_52_high) / week_52_high) * 100, 2)
+            })
+    
+    print("\n")
+    
+    # Create results DataFrame
+    if stocks_at_52w_high:
+        results_df = pd.DataFrame(stocks_at_52w_high)
+        results_df = results_df.sort_values('Gain %', ascending=False)
+        
+        print(f"\n{'='*80}")
+        print(f"STOCKS THAT HIT 52-WEEK HIGH THIS WEEK: {len(stocks_at_52w_high)} stocks found")
+        print(f"{'='*80}\n")
+        print(results_df.to_string(index=False))
+        print(f"\n{'='*80}")
+        
+        # Summary statistics
+        print(f"\nSUMMARY:")
+        print(f"- Total stocks analyzed: {len(NIFTY_100_SYMBOLS)}")
+        print(f"- Stocks at 52-week high: {len(stocks_at_52w_high)}")
+        print(f"- Percentage: {round((len(stocks_at_52w_high)/len(NIFTY_100_SYMBOLS))*100, 2)}%")
+        
+        return results_df
+    else:
+        print("No stocks hit 52-week high during this week.")
+        return pd.DataFrame()
 
-    # Show near-high stocks if requested
-    if args.near_high:
-        near_high_df = detector.get_near_52w_high_stocks(args.threshold)
-        if len(near_high_df) > 0:
-            print("\n" + "="*80)
-            print(f" STOCKS NEAR 52-WEEK HIGH (within {args.threshold}%)")
-            print("="*80)
-            print(near_high_df.to_string(index=False))
+def scan_multiple_weeks(num_weeks=4):
+    """Scan multiple weeks for 52-week highs"""
+    results = {}
+    ist = pytz.timezone('Asia/Kolkata')
+    
+    for i in range(num_weeks):
+        week_end = datetime.now(ist) - timedelta(weeks=i)
+        week_start = week_end - timedelta(days=week_end.weekday())
+        week_end = week_start + timedelta(days=6)
+        
+        week_label = f"Week {week_start.strftime('%Y-%m-%d')}"
+        results[week_label] = find_52_week_high_stocks(week_start, week_end)
+    
+    return results
 
-    # Send email if requested
-    if args.email:
-        print(f"\n Email functionality requires SMTP configuration in the script.")
-        print(f"   Recipient: {args.email}")
-
+# Main execution
 if __name__ == "__main__":
-    main()
+    # Scan current week
+    current_week_results = find_52_week_high_stocks()
+    
+    # Optional: Scan last 4 weeks
+    # print("\n\nScanning last 4 weeks...")
+    # multi_week_results = scan_multiple_weeks(4)
