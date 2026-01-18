@@ -1,1 +1,1 @@
-pip install yfinance pandas
+pip install yfinance pandas pytz
