@@ -1,4 +1,5 @@
-# 52-Week-High-System
-Python script for screening Nifty 100 stocks at 52 week high
+# Nifty 100 Long Trading System
+Python script is obsolete.
 <br>
-[Youtube Playlist](https://www.youtube.com/watch?v=ef_9kFyhi0k&list=PLhKwz7hYMTDVUXV-hkJ2wnwnQECzn-egm)
+Click [here](https://docs.google.com/spreadsheets/d/1HjbXicD6UNjBB-cVOhR9r-sAQWrEwgXZ3-B7K6_pY88/edit?usp=sharing) to access Google Sheet.
+<br>
